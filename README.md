@@ -175,6 +175,8 @@ schema on confirmation.
 
 ---
 
+
+
 ## CRM schema & mapping rules
 
 The AI maps every record to this fixed schema:
@@ -211,6 +213,53 @@ retry cycles. If both providers fail, the affected batch is marked as skipped
 with a clear reason — the rest of the import continues unaffected.
 
 ---
+
+---
+
+## Deployment
+
+### Backend — Render
+
+1. Push your code to a public GitHub repository
+2. Go to [render.com](https://render.com) and create a new **Web Service**
+3. Connect your GitHub repository
+4. Configure:
+   - **Root Directory**: `backend`
+   - **Build Command**: `npm install`
+   - **Start Command**: `npm start`
+   - **Instance Type**: Free
+5. Add environment variables:
+   - `GEMINI_API_KEY` — your Gemini API key
+   - `OPENAI_API_KEY` — your Groq API key (Groq is OpenAI-compatible)
+   - `PORT` — `4000`
+6. Click **Create Web Service**
+
+Once deployed, your backend URL will look like:
+`https://your-app-name.onrender.com`
+
+Verify it's running: `https://your-app-name.onrender.com/health` should return `{"status":"ok"}`
+
+> **Note**: Render's free tier spins down after inactivity. The first request
+> after a cold start may take 30-60 seconds — this is expected, not a bug.
+
+---
+
+### Frontend — Vercel
+
+1. Go to [vercel.com](https://vercel.com) and create a new **Project**
+2. Import your GitHub repository
+3. Configure:
+   - **Root Directory**: `frontend`
+   - **Framework Preset**: Next.js (auto-detected)
+4. Add environment variable:
+   - `NEXT_PUBLIC_API_BASE_URL` — your Render backend URL (e.g. `https://your-app-name.onrender.com`)
+5. Click **Deploy**
+
+Once deployed, your frontend URL will look like:
+`https://your-app-name.vercel.app`
+
+> **Note**: Vercel auto-redeploys whenever you push to `main` on GitHub.
+> No manual redeployment needed after code changes.
 
 ## Beyond the spec: duplicate detection
 
