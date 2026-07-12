@@ -21,7 +21,8 @@ GrowEasy's fixed CRM schema using an LLM.
    backend API
 4. **AI mapping** — the backend batches the parsed rows and sends them to
    Gemini, which intelligently maps arbitrary column names to the fixed CRM
-   schema based on *meaning*, not exact naming
+   schema based on *meaning*, not exact naming. If Gemini fails, the system
+   automatically falls back to Groq (Llama 3.3 70B) before giving up.
 5. **Results** — imported and skipped records are shown in separate tables,
    along with total counts
 
@@ -33,17 +34,25 @@ GrowEasy's fixed CRM schema using an LLM.
 |---|---|
 | Frontend | Next.js (App Router), Tailwind CSS, react-dropzone, PapaParse |
 | Backend | Node.js, Express, Multer, PapaParse |
-| AI | Google Gemini (`gemini-2.5-flash-lite`) via `@google/genai` |
+| AI (Primary) | Google Gemini (`gemini-2.5-flash-lite`) via `@google/genai` |
+| AI (Fallback) | Groq (`llama-3.3-70b-versatile`) via OpenAI-compatible SDK |
 | Database | None — the app is stateless by design, per assignment scope |
 
 ### Why `gemini-2.5-flash-lite`
 
 The mapping task is pattern-matching against a known schema, not deep
 multi-step reasoning — so a lightweight, high-throughput model is a better
-fit than a heavier reasoning model. This choice also maximizes free-tier
-request headroom during development and evaluation. Extended "thinking" is
-explicitly disabled (`thinkingBudget: 0`) for the same reason: it isn't
-needed for this task and only adds latency.
+fit than a heavier reasoning model. Extended "thinking" is explicitly
+disabled (`thinkingBudget: 0`) for the same reason: it isn't needed for
+this task and only adds latency.
+
+### Why Groq as fallback
+
+Gemini's free tier has a daily request cap. If Gemini's quota is exhausted
+or the API returns a transient error, the system automatically retries with
+Groq — a free, no-credit-card-required provider with generous daily limits.
+The fallback is transparent: the same prompt is sent, the same response
+shape is expected, and the user sees no difference in the results.
 
 ---
 
@@ -53,32 +62,46 @@ needed for this task and only adds latency.
 groweasy-csv-importer/
 ├── backend/
 │   ├── src/
-│   │   ├── server.js        # Express app, single upload/import route
-│   │   ├── aiMapper.js       # Batching, Gemini prompt, retry logic
-│   │   ├── deduplicate.js    # Duplicate lead detection (email + mobile)
-│   │   ├── crmSchema.js      # CRM field list + allowed enum values
-│   │   └── config.js         # Centralized environment variable loading
-│   ├── .env                  # GEMINI_API_KEY, PORT (not committed)
+│   │   ├── server.js              # Express app, single upload/import route
+│   │   ├── config/
+│   │   │   ├── config.js          # Centralized environment variable loading
+│   │   │   └── constants.js       # All magic values, error/log messages
+│   │   ├── services/
+│   │   │   ├── aiMapper.js        # Batching, retry logic, fallback orchestration
+│   │   │   ├── openaiMapper.js    # Groq fallback (OpenAI-compatible SDK)
+│   │   │   └── deduplicate.js     # Duplicate lead detection (email + mobile)
+│   │   ├── prompts/
+│   │   │   └── prompt.js          # AI prompt — isolated for independent iteration
+│   │   └── schema/
+│   │       └── crmSchema.js       # CRM field list + allowed enum values
+│   ├── .env                       # API keys, PORT (not committed)
 │   └── package.json
 │
 ├── frontend/
 │   ├── src/
 │   │   ├── app/
-│   │   │   └── page.js       # Page composition + step state machine
+│   │   │   ├── page.js            # Page composition + step state machine
+│   │   │   └── layout.js          # Root layout with ThemeProvider
 │   │   ├── components/
 │   │   │   ├── UploadDropzone.jsx
-│   │   │   ├── PreviewTable.jsx
+│   │   │   ├── PreviewTable.jsx   # Shared DataTable component
 │   │   │   ├── ResultsTable.jsx
 │   │   │   └── ui/
 │   │   │       ├── Button.jsx
 │   │   │       ├── Spinner.jsx
-│   │   │       └── FileChip.jsx
+│   │   │       ├── FileChip.jsx
+│   │   │       └── ThemeToggle.jsx
 │   │   ├── constants/
-│   │   │   ├── apiEndpoints.js
-│   │   │   ├── messages.js
-│   │   │   └── crmSchema.js  # Mirrors backend's schema for column headers
-│   │   └── api/
-│   │       └── importApi.js  # Single fetch wrapper for the import call
+│   │   │   ├── apiEndpoints.js    # Centralized backend URLs
+│   │   │   ├── messages.js        # All user-facing strings
+│   │   │   ├── crmSchema.js       # Mirrors backend schema + human-readable labels
+│   │   │   └── theme.js           # Design tokens (colors, surfaces)
+│   │   ├── context/
+│   │   │   └── ThemeContext.jsx   # Global dark/light mode state
+│   │   ├── api/
+│   │   │   └── importApi.js       # Single fetch wrapper for the import call
+│   │   └── utils/
+│   │       └── formatFileSize.js  # Pure utility, extracted from FileChip
 │   └── package.json
 │
 └── README.md
@@ -91,6 +114,7 @@ groweasy-csv-importer/
 ### Prerequisites
 - Node.js (v18 or later recommended)
 - A Gemini API key — get one free at [aistudio.google.com/apikey](https://aistudio.google.com/apikey)
+- A Groq API key (fallback) — get one free at [console.groq.com](https://console.groq.com) (no credit card required)
 
 ### 1. Backend setup
 
@@ -103,8 +127,12 @@ Create a `.env` file inside `backend/`:
 
 ```
 GEMINI_API_KEY=your_gemini_api_key_here
+OPENAI_API_KEY=your_groq_api_key_here
 PORT=4000
 ```
+
+Note: `OPENAI_API_KEY` holds the Groq key — Groq's API is OpenAI-compatible,
+so the same SDK and variable name work without any changes.
 
 Start the backend:
 
@@ -168,6 +196,22 @@ Key rules enforced in the AI prompt:
 - A record is skipped only if it has **neither** an email **nor** a mobile
   number.
 
+---
+
+## AI provider fallback
+
+The system uses a two-provider fallback chain:
+
+1. **Gemini** (`gemini-2.5-flash-lite`) — primary provider, tried first
+2. **Groq** (`llama-3.3-70b-versatile`) — fallback, tried automatically if Gemini fails
+
+If Gemini returns a quota error (`429`), the system skips remaining retries
+immediately and falls back to Groq rather than waiting through pointless
+retry cycles. If both providers fail, the affected batch is marked as skipped
+with a clear reason — the rest of the import continues unaffected.
+
+---
+
 ## Beyond the spec: duplicate detection
 
 Not required by the assignment, but added as a data-quality safeguard:
@@ -181,39 +225,41 @@ still caught correctly.
 
 ## Known limitations
 
-- **Gemini free-tier daily quota**: the free tier for Gemini models is
-  capped at a small number of requests per day, shared across all keys in
-  the same Google Cloud project. Heavy testing can exhaust this quota,
-  surfacing as a `429` error. For reliable evaluation, either enable
-  billing on the associated Google Cloud project (usage costs for this
-  scale of testing are negligible) or use a fresh project/key.
-- **Sequential batch processing**: batches are currently sent to Gemini one
-  at a time rather than in parallel. This was a deliberate scope decision
-  given the assignment's time constraints — the codebase is structured so
-  that adding a concurrency-limited parallel processor later would only
-  require changes inside `aiMapper.js`, with no changes needed elsewhere.
-- **No automated tests**: given the project timeline, testing was done
-  manually with a range of deliberately messy CSVs (renamed/reordered
-  columns, quoted commas, multiple emails/phones per record, malformed
-  quotes, missing fields, and duplicate records) rather than an automated
-  suite.
+- **Gemini free-tier daily quota**: the free tier is capped at 20 requests
+  per day per project. The Groq fallback handles this automatically, but if
+  both providers are exhausted, affected batches will be marked as skipped.
+  For reliable high-volume evaluation, enable billing on the Gemini project.
+- **Sequential batch processing**: batches are sent one at a time rather
+  than in parallel. Deliberate scope decision — the codebase is structured
+  so adding concurrency would only require changes inside `aiMapper.js`.
+- **No automated tests**: testing was done manually with a range of
+  deliberately messy CSVs (renamed/reordered columns, quoted commas,
+  multiple emails/phones per record, malformed quotes, missing fields,
+  and duplicate records).
+- **Render free-tier cold starts**: the backend may take 30-60 seconds to
+  respond on the first request after inactivity. This is expected behavior
+  on Render's free tier — subsequent requests are fast.
 
 ---
 
 ## Bonus items implemented
 
 - Drag & drop upload
+- Dark mode / light mode toggle (persists across sessions)
+- AI provider fallback (Gemini → Groq) for resilience
 - Duplicate lead detection (beyond spec)
 - Loading state during AI processing
 - Clear, itemized error handling (invalid file type, empty file, oversized
-  file, failed AI batches)
+  file, quota exhaustion, failed AI batches)
+- File chip with remove/replace option in preview
+- Centralized design tokens, strings, and constants (zero hardcoded values
+  in components)
 
 ## Bonus items not implemented (given time constraints)
 
 - Parallel/streaming batch processing
 - Unit tests
 - Docker setup
-- Dark mode
 - Virtualized tables for very large CSVs
 
 ---
