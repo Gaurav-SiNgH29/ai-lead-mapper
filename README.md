@@ -255,7 +255,7 @@ still caught correctly.
 - Centralized design tokens, strings, and constants (zero hardcoded values
   in components)
 
-## Bonus items not implemented (given time constraints)
+## Bonus items not implemented
 
 - Parallel/streaming batch processing
 - Unit tests
