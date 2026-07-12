@@ -1,35 +1,43 @@
-'use client';
+"use client";
 
-import { useState } from 'react';
-import Papa from 'papaparse';
-import UploadDropzone from '@/components/UploadDropzone';
-import PreviewTable from '@/components/PreviewTable';
-import ResultsTable from '@/components/ResultsTable';
-import Button from '@/components/ui/Button';
-import Spinner from '@/components/ui/Spinner';
-import FileChip from '@/components/ui/FileChip';
-import { MESSAGES } from '@/constants/messages';
-import { importCsv } from '@/api/importApi';
+import { useState } from "react";
+import Papa from "papaparse";
+import UploadDropzone from "@/components/UploadDropzone";
+import PreviewTable from "@/components/PreviewTable";
+import ResultsTable from "@/components/ResultsTable";
+import Button from "@/components/ui/Button";
+import Spinner from "@/components/ui/Spinner";
+import FileChip from "@/components/ui/FileChip";
+import ThemeToggle from "@/components/ui/ThemeToggle";
+import { MESSAGES } from "@/constants/messages";
+import { THEME } from "@/constants/theme";
+import { importCsv } from "@/api/importApi";
 
-const STEPS = ['Upload', 'Preview', 'Confirm', 'Results'];
+// Step labels pulled from MESSAGES — no hardcoded strings in this file.
+// Defined outside the component so the array reference is stable across
+// renders and never triggers unnecessary re-renders.
+const STEPS = [
+  MESSAGES.stepUpload,
+  MESSAGES.stepPreview,
+  MESSAGES.stepConfirm,
+  MESSAGES.stepResults,
+];
 
+// Page-level state machine: currentStep drives which screen is shown.
+// 0 = Upload, 1 = Preview, 2 = Confirm (loading), 3 = Results
 export default function Home() {
   const [currentStep, setCurrentStep] = useState(0);
   const [file, setFile] = useState(null);
   const [uploadError, setUploadError] = useState(null);
   const [parsedColumns, setParsedColumns] = useState([]);
   const [parsedRows, setParsedRows] = useState([]);
-
   const [isImporting, setIsImporting] = useState(false);
   const [importError, setImportError] = useState(null);
   const [importResult, setImportResult] = useState(null);
 
-  // Simulated progress percentage shown during AI processing. This does
-  // not reflect real backend batch completion — it climbs steadily while
-  // the request is in flight, then completes once the response arrives.
-  // Chosen over real streaming progress for reliability given the
-  // backend/dev-server response buffering issues encountered with NDJSON.
-
+  // Client-side CSV parse for preview only — no backend call yet,
+  // matching the spec's requirement that AI processing happens only
+  // after explicit user confirmation in Step 3.
   function handleFileAccepted(selectedFile, error) {
     if (error) {
       setUploadError(error);
@@ -50,8 +58,10 @@ export default function Home() {
           return;
         }
 
+        // Guard against non-CSV content that technically "parses" —
+        // a real CSV header row should never contain brace characters.
         const looksLikeJson = fields.some(
-          (f) => f.includes('{') || f.includes('}'),
+          (f) => f.includes("{") || f.includes("}")
         );
         if (looksLikeJson) {
           setUploadError(MESSAGES.errorNotCsv);
@@ -68,8 +78,9 @@ export default function Home() {
     });
   }
 
-  // Discards the currently selected file and returns to the upload screen,
-  // without losing any other app state (e.g. previous import results).
+  // Discards the selected file and returns to Upload — does NOT clear
+  // importResult, so a previous successful import remains visible if
+  // the user navigates back before starting a new import.
   function handleDiscardFile() {
     setFile(null);
     setParsedColumns([]);
@@ -79,28 +90,33 @@ export default function Home() {
     setCurrentStep(0);
   }
 
+  // Sends the confirmed file to the backend for AI mapping.
+  // Confirm button is disabled while importing to prevent double-submit.
   async function handleConfirm() {
-  if (!file) {
-    setImportError(MESSAGES.errorNoFile);
-    return;
+    if (!file) {
+      setImportError(MESSAGES.errorNoFile);
+      return;
+    }
+
+    setImportError(null);
+    setIsImporting(true);
+    setCurrentStep(2);
+
+    try {
+      const result = await importCsv(file);
+      setImportResult(result);
+      setCurrentStep(3);
+    } catch (err) {
+      setImportError(err.message || MESSAGES.errorGeneric);
+      // Return to Preview so the user can retry without re-uploading.
+      setCurrentStep(1);
+    } finally {
+      setIsImporting(false);
+    }
   }
 
-  setImportError(null);
-  setIsImporting(true);
-  setCurrentStep(2);
-
-  try {
-    const result = await importCsv(file);
-    setImportResult(result);
-    setCurrentStep(3);
-  } catch (err) {
-    setImportError(err.message || MESSAGES.errorGeneric);
-    setCurrentStep(1);
-  } finally {
-    setIsImporting(false);
-  }
-}
-
+  // Full reset — clears all state and returns to the Upload screen.
+  // Distinct from handleDiscardFile (which preserves importResult).
   function handleStartOver() {
     setFile(null);
     setParsedColumns([]);
@@ -112,16 +128,19 @@ export default function Home() {
   }
 
   return (
-    <main className="min-h-screen bg-slate-50 text-slate-900">
+    <main className={`min-h-screen ${THEME.pageBg} ${THEME.textPrimary}`}>
       <div className="mx-auto max-w-5xl px-4 py-10 sm:px-6">
-        <header className="mb-10">
-          <h1 className="text-2xl font-semibold tracking-tight text-slate-900">
-            GrowEasy CSV Importer
-          </h1>
-          <p className="mt-1 text-sm text-slate-500">
-            Upload any lead export — we&apos;ll map it to your CRM
-            automatically.
-          </p>
+
+        <header className="mb-10 flex items-start justify-between">
+          <div>
+            <h1 className={`text-2xl font-semibold tracking-tight ${THEME.textPrimary}`}>
+              {MESSAGES.appTitle}
+            </h1>
+            <p className={`mt-1 text-sm ${THEME.textSecondary}`}>
+              {MESSAGES.appSubtitle}
+            </p>
+          </div>
+          <ThemeToggle />
         </header>
 
         <ol className="mb-8 flex flex-wrap items-center gap-2 text-sm">
@@ -130,10 +149,10 @@ export default function Home() {
               <span
                 className={`flex h-6 w-6 items-center justify-center rounded-full text-xs font-medium ${
                   i === currentStep
-                    ? 'bg-orange-500 text-white'
+                    ? "bg-orange-500 text-white"
                     : i < currentStep
-                      ? 'bg-orange-100 text-orange-600'
-                      : 'bg-slate-200 text-slate-400'
+                    ? "bg-orange-100 text-orange-600 dark:bg-orange-950 dark:text-orange-400"
+                    : "bg-slate-200 text-slate-400 dark:bg-slate-800 dark:text-slate-500"
                 }`}
               >
                 {i + 1}
@@ -141,20 +160,24 @@ export default function Home() {
               <span
                 className={
                   i === currentStep
-                    ? 'font-medium text-slate-900'
-                    : 'text-slate-400'
+                    ? `font-medium ${THEME.textPrimary}`
+                    : THEME.textMuted
                 }
               >
                 {step}
               </span>
               {i < STEPS.length - 1 && (
-                <span className="mx-1 h-px w-6 bg-slate-200 sm:mx-2 sm:w-8" />
+                <span
+                  className={`mx-1 h-px w-6 sm:mx-2 sm:w-8 ${THEME.border}`}
+                />
               )}
             </li>
           ))}
         </ol>
 
-        <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-8">
+        <div
+          className={`rounded-2xl border p-4 shadow-sm sm:p-8 ${THEME.cardBorder} ${THEME.cardBg}`}
+        >
           {currentStep === 0 && (
             <UploadDropzone
               onFileAccepted={handleFileAccepted}
@@ -166,14 +189,14 @@ export default function Home() {
             <div>
               <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                 <div>
-                  <h2 className="text-lg font-medium text-slate-900">
+                  <h2 className={`text-lg font-medium ${THEME.textPrimary}`}>
                     {MESSAGES.previewTitle}
                   </h2>
-                  <p className="text-sm text-slate-500">
+                  <p className={`text-sm ${THEME.textSecondary}`}>
                     {MESSAGES.previewSubtitle}
                   </p>
                 </div>
-                <Button onClick={handleConfirm}>
+                <Button onClick={handleConfirm} disabled={isImporting}>
                   {MESSAGES.confirmButton}
                 </Button>
               </div>
@@ -183,7 +206,7 @@ export default function Home() {
               </div>
 
               {importError && (
-                <p className="mb-4 text-sm text-red-600" role="alert">
+                <p className={`mb-4 text-sm ${THEME.errorText}`} role="alert">
                   {importError}
                 </p>
               )}
@@ -196,8 +219,12 @@ export default function Home() {
             <div className="flex flex-col items-center justify-center gap-4 py-16">
               <Spinner />
               <div className="text-center">
-                <p className="font-medium text-slate-900">{MESSAGES.loadingTitle}</p>
-                <p className="text-sm text-slate-500">{MESSAGES.loadingSubtitle}</p>
+                <p className={`font-medium ${THEME.textPrimary}`}>
+                  {MESSAGES.loadingTitle}
+                </p>
+                <p className={`text-sm ${THEME.textSecondary}`}>
+                  {MESSAGES.loadingSubtitle}
+                </p>
               </div>
             </div>
           )}
@@ -205,7 +232,7 @@ export default function Home() {
           {currentStep === 3 && importResult && (
             <div>
               <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                <h2 className="text-lg font-medium text-slate-900">
+                <h2 className={`text-lg font-medium ${THEME.textPrimary}`}>
                   {MESSAGES.resultsTitle}
                 </h2>
                 <Button variant="secondary" onClick={handleStartOver}>
