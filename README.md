@@ -1,4 +1,4 @@
-# GrowEasy CSV Importer
+#  AI Lead Mapper - CSV Importer
 
 An AI-powered CSV importer that intelligently extracts CRM lead data from
 **any** CSV format — Facebook Lead exports, Google Ads exports, real estate
@@ -261,9 +261,9 @@ Once deployed, your frontend URL will look like:
 > **Note**: Vercel auto-redeploys whenever you push to `main` on GitHub.
 > No manual redeployment needed after code changes.
 
-## Beyond the spec: duplicate detection
+##  duplicate detection
 
-Not required by the assignment, but added as a data-quality safeguard:
+added  a data-quality safeguard:
 records with the same normalized email + mobile number combination are
 detected after AI mapping and excluded from `imported`, appearing instead in
 `skipped` with a clear "duplicate record" reason. This runs across the
@@ -291,7 +291,7 @@ still caught correctly.
 
 ---
 
-## Bonus items implemented
+##  items implemented
 
 - Drag & drop upload
 - Dark mode / light mode toggle (persists across sessions)
@@ -303,16 +303,3 @@ still caught correctly.
 - File chip with remove/replace option in preview
 - Centralized design tokens, strings, and constants (zero hardcoded values
   in components)
-
-## Bonus items not implemented
-
-- Parallel/streaming batch processing
-- Unit tests
-- Docker setup
-- Virtualized tables for very large CSVs
-
----
-
-## Submitted for
-
-Software Developer (Intern) — GrowEasy
